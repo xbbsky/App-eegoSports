@@ -32,9 +32,9 @@
 #include <string>
 #include <vector>
 // eemagine
-#include <channel.h>
-#include <exceptions.h>
-#include <stream.h>
+#include <eemagine/sdk/channel.h>
+#include <eemagine/sdk/exceptions.h>
+#include <eemagine/sdk/stream.h>
 
 namespace eemagine {
 	namespace sdk {

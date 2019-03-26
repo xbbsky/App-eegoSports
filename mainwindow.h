@@ -1,22 +1,24 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
-#include <QtGui/QMainWindow>
+#include <QtWidgets/QMainWindow>
 #include "ui_mainwindow.h"
 #include <QThread>
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QVector>
 #include <string>
 #include <vector>
+#include <memory>
 
 // LSL API
-#include "../../LSL/liblsl/include/lsl_cpp.h"
+#include <lsl_cpp.h>
 
 // eegoSports
-#define WIN32_LEAN_AND_MEAN
+//#define WIN32_LEAN_AND_MEAN
 #define EEGO_SDK_BIND_STATIC
-#include <windows.h>
+//#include <windows.h>
 #include "eemagine/sdk/factory.h"
 
 class Reader : public QObject {
@@ -32,17 +34,21 @@ public:
 		this->stop = stop;
 	}
 	void setParams(int samplingRate);
+    void setParams(QString chs);
 
 signals:
 	void finished();
 	void timeout();
 	void ampNotFound();
 	void connectionLost();
+    void displayImp(QVector<double>);
 
 private:
-	eemagine::sdk::amplifier* amp;
-	eemagine::sdk::stream* eegStream;
+    std::shared_ptr<eemagine::sdk::factory> fact;
+    std::shared_ptr<eemagine::sdk::amplifier> amp;
+    std::shared_ptr<eemagine::sdk::stream> eegStream;
 	int samplingRate;
+    std::vector<int> channels;
 	bool stop;
 };
 
@@ -59,6 +65,7 @@ public:
 	void threadTimeout();
 	void connectionLost();
 	void ampNotFound();
+    void displayImp(QVector<double>);
 	void load_config_dialog();
 	void save_config_dialog();
 
@@ -76,11 +83,9 @@ private:
 	void load_config(const std::string &filename);
 	void save_config(const std::string &filename);
 
-	eemagine::sdk::amplifier* amp; 
-	eemagine::sdk::stream* eegStream;
 	Reader *reader;
 	QThread *thread;					
-
+    QVector<QLabel*> imps;
 	Ui::MainWindowClass ui;
 };
 

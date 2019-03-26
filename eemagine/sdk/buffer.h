@@ -32,7 +32,7 @@
 #include <string>
 #include <vector>
 // eemagine
-#include <exceptions.h>
+#include <eemagine/sdk/exceptions.h>
 
 namespace eemagine {
 	namespace sdk {
@@ -87,9 +87,7 @@ namespace eemagine {
 			 * \brief direct pointer to data
 			 */
 			double * data() {
-				//return &_data.front(); //this might fail and is a pre-C++11 hack for _data.data()
-				//return _data.data();
-				return &(_data[0]);
+				return _data.data();
 			}
 		protected:
 			std::vector < double > _data;

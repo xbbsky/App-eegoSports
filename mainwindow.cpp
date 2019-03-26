@@ -3,17 +3,20 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include <boost/algorithm/string.hpp>
-#include <boost/lexical_cast.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/foreach.hpp>
 #include <fstream> 
 #include "wrapper.cc"
+#include <QDebug>
+#include <algorithm>
 
 using namespace eemagine::sdk;
 
+#include <boost/lexical_cast.hpp>
+#include <boost/shared_ptr.hpp>
+#include <boost/foreach.hpp>
 MainWindow::MainWindow(QWidget *parent, const std::string &config_file, const bool linkOnStart) : QMainWindow(parent)
 {
-	reader = NULL;
+    qRegisterMetaType<QVector<double>>("QVector<double>");
+    reader = nullptr;
 	ui.setupUi(this);
 
 	// make GUI connections
@@ -39,7 +42,7 @@ void MainWindow::save_config_dialog() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *ev) {
-	if (reader != NULL) {
+    if (reader != nullptr) {
 		ev->ignore();
 	}
 }
@@ -60,6 +63,7 @@ void MainWindow::load_config(const std::string &filename) {
 	// get config values
 	try {
 		ui.samplingRate->setCurrentIndex(pt.get<int>("settings.samplingrate", 3));
+
 	}
 	catch (std::exception &) {
 		QMessageBox::information(this, "Error in Config File", "Could not read out config parameters.", QMessageBox::Ok);
@@ -90,9 +94,15 @@ void MainWindow::save_config(const std::string &filename) {
 
 
 void MainWindow::link() {
-	if (reader != NULL) {
+    static int status = 0;
+    if (reader != nullptr) {
 		reader->setStop(true);
-		ui.linkButton->setText("Link");
+        if(status==1){
+            ui.linkButton->setText("Stop Sending Data");
+            status=0;
+        }else{
+            ui.linkButton->setText("Link");
+        }
 	}
 	else {
 		// === perform link action ===
@@ -115,6 +125,7 @@ void MainWindow::link() {
 			connect(reader, SIGNAL(timeout()), this, SLOT(threadTimeout()));
 			connect(reader, SIGNAL(connectionLost()), this, SLOT(connectionLost()));
 			connect(reader, SIGNAL(ampNotFound()), this, SLOT(ampNotFound()));
+            connect(reader, &Reader::displayImp, this, &MainWindow::displayImp);
 			thread->start();
 		}
 		catch (std::exception &e) {
@@ -125,14 +136,30 @@ void MainWindow::link() {
 		}
 
 		// done, all successful
-		ui.linkButton->setText("Unlink");
+        ui.linkButton->setText("Stop Preparing");
+        status = 1;
 	}
 }
-
+void MainWindow::displayImp(QVector<double> impData){
+    if(impData.size()!=imps.size()){
+        for(int i=0;i<imps.size();i++){
+            imps[i]->deleteLater();
+        }
+        imps.clear();
+        imps.resize(impData.size());
+        for(int i=0;i<impData.size();i++){
+            imps[i]=new QLabel(ui.groupBox);
+        }
+    }
+    for(int i=0;i<impData.size();i++){
+        imps[i]->setNum(impData[i]);
+    }
+    return;
+}
 void MainWindow::threadFinished() {
-	reader = NULL;
+    reader = nullptr;
 	delete thread;
-	thread = NULL;
+    thread = nullptr;
 	ui.linkButton->setText("Link");
 }
 
@@ -147,6 +174,7 @@ void MainWindow::ampNotFound() {
 void MainWindow::connectionLost() {
 	QMessageBox::critical(this, "Error", (std::string("Error: Amp connection lost")).c_str(), QMessageBox::Ok);
 }
+
 
 // --- CONSTRUCTOR ---
 Reader::Reader() {
@@ -163,16 +191,46 @@ void Reader::setParams(int samplingRate) {
 	this->samplingRate = samplingRate;
 }
 
+void Reader::setParams(QString chs) {
+    auto ss = std::stringstream(chs.toStdString());
+    channels.clear();
+    int num;
+    while(ss>>num){
+        channels.push_back(num);
+    }
+}
+
 // --- PROCESS ---
+
 // Start processing data.
 void Reader::read() {
-	bool ampFound = true;
 	try {
-		factory fact;
-		amp = fact.getAmplifier();
-		eegStream = amp->OpenEegStream(samplingRate);
+        qDebug()<<"start to construct";
+        fact.reset(new factory());
+        qDebug()<<"constructed";
+        amp.reset(fact->getAmplifier());
 
+        // get imp data
+        qDebug()<<"Getting impStream";
+        std::shared_ptr<stream> impStream(amp->OpenImpedanceStream());
+        qDebug()<<"Get impStream";
+        // get impedance data
+        while(!stop){
+            auto buf = impStream->getData();
+            //qDebug()<<buf.getChannelCount()<<buf.getSampleCount();
+            auto data = buf.data();
+            auto max_value = std::max_element(data, data+32);
+            auto min_value = std::min_element(data, data+32);
+            qDebug()<<min_value-data<<"\t"<<*min_value<<"\t"<<max_value-data<<"\t"<<*max_value;
+        }
+        impStream.reset();
+        setStop(false);
+        
+        eegStream.reset(amp->OpenEegStream(samplingRate));
 		std::vector<channel> channelList = eegStream->getChannelList();
+        for(auto ch:channelList){
+            qDebug()<<ch.getType()<<ch.getIndex();
+        }
 
 		// create data streaminfo and append some meta-data
 		lsl::stream_info data_info("eegoSports " + amp->getSerialNumber(), "EEG", channelList.size() - 2, samplingRate, lsl::cf_float32, "eegoSports_" + amp->getSerialNumber());
@@ -180,13 +238,15 @@ void Reader::read() {
 
 		for (int k = 0; k < channelList.size() - 2; k++) {
 			channels.append_child("channel")
-				.append_child_value("label", "Ch" + k)
+                .append_child_value("label", "Ch" + std::to_string(k))
 				.append_child_value("type", "EEG")
 				.append_child_value("unit", "microvolts");
+            //qDebug()<<("ch"+std::to_string(k)).c_str();
 		}
 		data_info.desc().append_child("acquisition")
 			.append_child_value("manufacturer", "antneuro")
-			.append_child_value("serial_number", boost::lexical_cast<std::string>(amp->getSerialNumber()).c_str());
+            //.append_child_value("serial_number", boost::lexical_cast<std::string>(amp->getSerialNumber()).c_str());
+            .append_child_value("serial_number", amp->getSerialNumber());
 
 		// make a data outlet
 		lsl::stream_outlet data_outlet(data_info);
@@ -195,13 +255,11 @@ void Reader::read() {
 		lsl::stream_info marker_info("eegoSports-" + amp->getSerialNumber() + "_markers" + "Markers", "Markers", 1, 0, lsl::cf_string, "eegoSports_" + boost::lexical_cast<std::string>(amp->getSerialNumber()) + "_markers");
 		lsl::stream_outlet marker_outlet(marker_info);
 
-		std::vector<channel> eegChannelList = eegStream->getChannelList();
-
-		int timeout_count = 0;
 		while (!stop) {
 			buffer buffer = eegStream->getData();
-			int channelCount = buffer.getChannelCount();
-			int sampleCount = buffer.size() / channelCount;
+            auto channelCount = buffer.getChannelCount();
+            auto sampleCount = buffer.size() / channelCount;
+
 			std::vector<std::vector<float>> send_buffer(sampleCount, std::vector<float>(channelCount - 2));
 			for (int s = 0; s < sampleCount; s++) {
 				for (int c = 0; c < channelCount - 2; c++) {
@@ -210,6 +268,10 @@ void Reader::read() {
 			}
 			double now = lsl::local_clock();
 			data_outlet.push_chunk(send_buffer, now);
+
+            if(sampleCount>0){
+                qDebug()<<now<<"\t"<<channelCount<<"\t"<<sampleCount<<"\t"<<buffer.getSampleCount();
+            }
 
 			int last_mrk = 0;
 			for (int s = 0; s < sampleCount; s++) {
@@ -221,21 +283,28 @@ void Reader::read() {
 					last_mrk = mrk;
 				}
 			}
+
+
 		}
 	}
-	catch (exceptions::notFound) {
-		ampFound = false;
+    catch (exceptions::notFound &e) {
+        qDebug()<<"notFound:"<<e.what();
 		emit ampNotFound();
 	}
-	catch (exceptions::notConnected) {
+    catch (exceptions::notConnected &e) {
+        qDebug()<<"notConnected:"<<e.what();
 		emit connectionLost();
 	}
+    catch (exceptions::incorrectValue &e){
+        qDebug()<<"incorrectValue:"<<e.what();
+    }
+    catch (exceptions::alreadyExists &e){
+        qDebug()<<"alreadyExists:"<<e.what();
+    }
+
 	catch (std::exception &e) {
 		int i = 0;
-	}
-	if (ampFound) {
-		delete eegStream;
-		delete amp;
+        qDebug()<<"unknown:"<<e.what();
 	}
 	emit finished();
 }
